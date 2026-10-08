@@ -1,0 +1,1 @@
+{"version": "b7d2e104", "markdown": "# Политики\n- [MUST] Используй Go. → rule-go\n- [SHOULD] Пиши тесты. → rule-tests\n\t \u001c", "over_budget": true, "used_tokens": 2500}

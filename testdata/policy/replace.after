@@ -1,0 +1,7 @@
+Before
+<!-- wikisvc:begin version=b7d2e104 -->
+# Политики
+- [MUST] Используй Go. → rule-go
+- [SHOULD] Пиши тесты. → rule-tests
+<!-- wikisvc:end -->
+After

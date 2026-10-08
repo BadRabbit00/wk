@@ -1,0 +1,2 @@
+# Byte-exact universal-newline compatibility fixture; CR is intentional.
+testdata/policy/crlf.before -text -diff
