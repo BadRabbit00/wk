@@ -11,6 +11,57 @@ import (
 	"testing"
 )
 
+func TestOfflineCheckPreservesDocsReport(t *testing.T) {
+	for _, state := range []string{"clean", "error", "warning", "strict warning", "server error"} {
+		t.Run(state, func(t *testing.T) {
+			overrides := map[string]response{}
+			if state == "server error" {
+				overrides["/api/v1/policies/compile"] = response{503, "unavailable", ""}
+			}
+			s := server(t, overrides)
+			a := testApp(t, s)
+			put(t, a.Root, "AGENTS.md", guardedText)
+			put(t, a.Root, "docs/INDEX.md", "# Docs\n")
+			want := 3
+			if state == "error" {
+				put(t, a.Root, "docs/broken.md", "ENT-missing\n")
+				want = 1
+			}
+			args := []string{"check"}
+			if strings.Contains(state, "warning") {
+				put(t, a.Root, "docs/system/domain.md", "## ENT-order — Order\nstatus: draft\n"+strings.Repeat("\n", 400))
+			}
+			if state == "strict warning" {
+				args = append(args, "--strict")
+				want = 1
+			}
+			if state == "server error" {
+				want = 1
+			} else {
+				s.Close()
+			}
+			code, out, stderr := invoke(t, a, args...)
+			if code != want || out == "" || !strings.Contains(stderr, "политики:") {
+				t.Fatal(code, out, stderr)
+			}
+			if state == "error" && !strings.Contains(out, "ENT-missing") {
+				t.Fatal(out)
+			}
+			if strings.Contains(state, "warning") && !strings.Contains(out, "domain.md") {
+				t.Fatal(out)
+			}
+			code, out, stderr = invoke(t, a, append(args, "--json")...)
+			var rep struct {
+				Docs     json.RawMessage
+				Policies struct{ Error string }
+			}
+			if code != want || json.Unmarshal([]byte(out), &rep) != nil || len(rep.Docs) == 0 || rep.Policies.Error == "" {
+				t.Fatal(code, out, stderr)
+			}
+		})
+	}
+}
+
 func TestDocsPythonGolden(t *testing.T) {
 	cases, err := os.ReadDir("../../testdata/golden")
 	if err != nil {

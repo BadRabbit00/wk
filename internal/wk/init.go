@@ -53,7 +53,7 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 		if oldErr != nil {
 			return result{}, oldErr
 		}
-		return result{Data: map[string]any{"project": old.Project, "changed": false}, Text: "Проект уже инициализирован; без изменений"}, nil
+		return a.installIntegrations(root, old.Project)
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -172,6 +172,21 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 	}
 	data, _ := yaml.Marshal(m)
 	plan[manifestFile] = data
+	integrations, notices, err := planIntegrations(root, a.integrationBundle())
+	if err != nil {
+		return result{}, err
+	}
+	// Template files cannot replace the installed harness configuration or skills.
+	delete(plan, ".claude/settings.json")
+	delete(plan, ".codex/hooks.json")
+	for _, dir := range skillDirs {
+		for _, name := range skillNames {
+			delete(plan, dir+"/"+name+"/SKILL.md")
+		}
+	}
+	for name, data := range integrations {
+		plan[name] = data
+	}
 	if a.Token != "" {
 		for name, data := range plan {
 			if strings.Contains(name, a.Token) || strings.Contains(string(data), a.Token) {
@@ -201,7 +216,7 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 	if err := a.write(root, manifestFile, plan[manifestFile]); err != nil {
 		return result{}, err
 	}
-	return result{Data: map[string]any{"project": m.Project, "changed": true, "files": sortedKeys(plan), "template": m.Template}, Text: "Инициализирован проект " + m.Project + "; изменения не закоммичены"}, nil
+	return result{Data: map[string]any{"project": m.Project, "changed": true, "files": sortedKeys(plan), "template": m.Template, "integration_diff": notices}, Text: "Инициализирован проект " + m.Project + "; изменения не закоммичены", Stderr: notices}, nil
 }
 
 func baseFiles() (map[string][]byte, error) {

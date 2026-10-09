@@ -8,13 +8,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
 
-type apiError struct{ Status int }
+type apiError struct {
+	Status int
+	Code   string
+}
 
-func (e apiError) Error() string { return fmt.Sprintf("вика вернула HTTP %d", e.Status) }
+func (e apiError) Error() string {
+	message := fmt.Sprintf("вика вернула HTTP %d", e.Status)
+	if e.Code != "" {
+		message += " (" + e.Code + ")"
+	}
+	return message
+}
+
+var apiCodePattern = regexp.MustCompile(`^E_[A-Z][A-Z0-9_]{0,61}$`)
 
 type Client struct {
 	Origin string
@@ -53,7 +65,18 @@ func (c Client) request(ctx context.Context, method, path string, payload any, o
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return apiError{response.StatusCode}
+		failure := apiError{Status: response.StatusCode}
+		const maxErrorBytes = 64 * 1024
+		data, err := io.ReadAll(io.LimitReader(response.Body, maxErrorBytes+1))
+		var envelope struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err == nil && len(data) <= maxErrorBytes && json.Unmarshal(data, &envelope) == nil && apiCodePattern.MatchString(envelope.Error.Code) {
+			failure.Code = envelope.Error.Code
+		}
+		return failure
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4*maxTemplateBytes+1))
 	if err != nil {

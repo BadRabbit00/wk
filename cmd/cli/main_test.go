@@ -11,7 +11,7 @@ func TestMainWiring(t *testing.T) {
 	for _, tc := range []struct {
 		arg  string
 		want int
-	}{{"help", 0}, {"unknown", 1}} {
+	}{{"help", 0}, {"unknown", 2}} {
 		code := -1
 		exitProcess = func(c int) { code = c }
 		os.Args = []string{"wk", tc.arg}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,56 @@ func TestTemplateRemoteFailures(t *testing.T) {
 	a.Cache = filepath.Join(a.Root, manifestFile, "child")
 	if _, err := a.fetchTemplate(context.Background(), Client{Origin: s.URL}, "go-service", false, ""); err == nil {
 		t.Fatal("accepted cache under regular file")
+	}
+}
+
+func TestRejectedTemplateNeverFallsBack(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+	}{{422, "E_TEMPLATE_INVALID"}, {404, "E_TEMPLATE_UNKNOWN"}} {
+		t.Run(tc.code, func(t *testing.T) {
+			healthy := server(t, nil)
+			a := testApp(t, healthy)
+			if _, err := a.fetchTemplate(context.Background(), Client{Origin: healthy.URL}, "go-service", false, ""); err != nil {
+				t.Fatal(err)
+			}
+			failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/schema/project-templates/go-service" {
+					t.Errorf("unexpected fallback request: %s", r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprintf(w, `{"error":{"code":%q,"message":%q,"details":["private-details"]}}`, tc.code, a.Token)
+			}))
+			defer failed.Close()
+			saveManifest(t, a.Root, manifest(failed.URL))
+			put(t, a.Root, "existing/keep.txt", "keep existing contents")
+			for _, args := range [][]string{
+				{"template", "show", "go-service"},
+				{"template", "show", "go-service", "--json"},
+				{"init", "--dir", "new-project", "--url", failed.URL, "--template", "go-service", "--profile", "go-service"},
+				{"init", "--dir", "existing", "--existing", "--force", "--url", failed.URL, "--template", "go-service", "--profile", "go-service"},
+			} {
+				code, out, stderr := invoke(t, a, args...)
+				if code != 1 || !strings.Contains(out+stderr, fmt.Sprintf("HTTP %d (%s)", tc.status, tc.code)) || strings.Contains(out+stderr, "private-details") {
+					t.Fatalf("%v: %d %s %s", args, code, out, stderr)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(a.Root, "new-project")); !os.IsNotExist(err) {
+				t.Fatalf("failed init created project: %v", err)
+			}
+			entries, err := os.ReadDir(filepath.Join(a.Root, "existing"))
+			if err != nil || len(entries) != 1 || entries[0].Name() != "keep.txt" {
+				t.Fatalf("failed init changed existing project: %v %v", entries, err)
+			}
+			data, err := os.ReadFile(filepath.Join(a.Root, "existing/keep.txt"))
+			if err != nil || string(data) != "keep existing contents" {
+				t.Fatalf("failed init overwrote existing file: %q %v", data, err)
+			}
+			if _, err := a.cachedTemplate("go-service", ""); err != nil {
+				t.Fatalf("cached template must still be valid: %v", err)
+			}
+		})
 	}
 }
 

@@ -176,7 +176,12 @@ func (a App) check(ctx context.Context, c Client, m Manifest, args []string) (re
 	}
 	pol, err := a.policies(ctx, c, m, false)
 	if err != nil {
-		return result{}, err
+		code := 1
+		var unavailable exitError
+		if rep.Code(*strict) == 0 && errors.As(err, &unavailable) && unavailable.code == 3 {
+			code = 3
+		}
+		return result{Data: map[string]any{"docs": rep, "policies": map[string]string{"error": err.Error()}}, Text: rep.Text(), Stderr: "wk: политики: " + err.Error(), Code: code}, nil
 	}
 	return result{Data: map[string]any{"docs": rep, "policies": pol.Data}, Text: rep.Text() + strings.TrimSpace(pol.Text) + "\n", Code: max(rep.Code(*strict), pol.Code)}, nil
 }

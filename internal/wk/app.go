@@ -24,25 +24,29 @@ const help = `wk — проекты и вика
   policy sync | check | search QUERY | show RULE-ID
   template list | show ID
   propose --file PAGE.md [--title TITLE] [--kind manual]
+  hook check | guard-block | guard-paths | policy-stale (JSON события на stdin)
 Все команды поддерживают --json. URL для init: --url или WIKI_URL.
 `
 
 type App struct {
-	Root      string
-	Token     string
-	WikiURL   string
-	Cache     string
-	Source    string
-	HTTP      *http.Client
-	docs      fs.FS
-	writeFile func(string, string, []byte) error
-	readCache func(string) ([]os.DirEntry, error)
+	Root         string
+	Token        string
+	WikiURL      string
+	Cache        string
+	Source       string
+	HTTP         *http.Client
+	Stdin        io.Reader
+	docs         fs.FS
+	integrations fs.FS
+	writeFile    func(string, string, []byte) error
+	readCache    func(string) ([]os.DirEntry, error)
 }
 
 type result struct {
-	Data any
-	Text string
-	Code int
+	Data   any
+	Text   string
+	Code   int
+	Stderr string
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -59,7 +63,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if source == "" {
 		source = defaultFlake
 	}
-	a := App{Root: root, Token: os.Getenv("WIKI_TOKEN"), WikiURL: os.Getenv("WIKI_URL"), Cache: filepath.Join(cache, "wk", "templates"), Source: source}
+	a := App{Root: root, Token: os.Getenv("WIKI_TOKEN"), WikiURL: os.Getenv("WIKI_URL"), Cache: filepath.Join(cache, "wk", "templates"), Source: source, Stdin: os.Stdin}
 	return a.Run(ctx, args, stdout, stderr)
 }
 
@@ -86,7 +90,15 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 			clean = append(clean, arg)
 		}
 	}
-	r, err := a.execute(ctx, clean)
+	var r result
+	var err error
+	if len(clean) > 0 && clean[0] == "hook" {
+		// Hook stdout is an event protocol, even when --json was passed.
+		jsonMode = false
+		r, err = a.hook(ctx, clean[1:])
+	} else {
+		r, err = a.execute(ctx, clean)
+	}
 	if err != nil {
 		message := redact(err.Error(), a.Token)
 		fmt.Fprintln(stderr, "wk:", message)
@@ -99,6 +111,9 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 			return coded.code
 		}
 		return 1
+	}
+	if r.Stderr != "" {
+		fmt.Fprintln(stderr, redact(r.Stderr, a.Token))
 	}
 	var output string
 	if jsonMode {
@@ -179,7 +194,7 @@ func (a App) execute(ctx context.Context, args []string) (result, error) {
 	switch args[0] {
 	case "component", "check", "docs", "policy", "template", "propose":
 	default:
-		return result{}, errors.New("неизвестная команда; см. wk --help")
+		return result{}, exitError{2, errors.New("неизвестная команда; см. wk --help")}
 	}
 	m, err := loadManifest(a.Root)
 	if err != nil {

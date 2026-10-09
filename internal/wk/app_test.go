@@ -66,6 +66,13 @@ func testApp(t *testing.T, s *httptest.Server) App {
 	t.Helper()
 	root := t.TempDir()
 	saveManifest(t, root, manifest(s.URL))
+	files, err := integrationFiles(assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range files {
+		put(t, root, name, string(data))
+	}
 	return App{Root: root, Token: t.Name(), Cache: filepath.Join(t.TempDir(), "templates"), Source: "path:/example/wk"}
 }
 
@@ -90,7 +97,7 @@ func TestCommandDispatch(t *testing.T) {
 	bad := [][]string{{"login"}, {"accept"}, {"promote"}, {"deprecate"}, {"revert"}, {"doctor", "extra"}, {"component"}, {"component", "remove"}, {"component", "add"}, {"component", "add", "a", "b"}, {"component", "add", "api", "--unknown"}, {"component", "add", "api", "--lang"}, {"component", "add", "api", "--with-ai=bad"}, {"check", "arg"}, {"check", "--wat"}, {"policy"}, {"policy", "accept", "rule-go"}, {"policy", "show", "../x"}, {"template"}, {"template", "show", "github:owner/repo#id"}, {"propose"}, {"propose", "--file", "x", "--kind", "heal"}, {"propose", "--file", "x", "extra"}, {"propose", "--unknown"}, {"propose", "--file", "missing.md"}}
 	for _, args := range bad {
 		want := 1
-		if args[0] == "check" {
+		if args[0] == "check" || args[0] == "login" || args[0] == "accept" || args[0] == "promote" || args[0] == "deprecate" || args[0] == "revert" {
 			want = 2
 		}
 		if code, _, _ := invoke(t, a, args...); code != want {
@@ -157,7 +164,7 @@ func TestDoctor(t *testing.T) {
 	if !strings.Contains(out, "есть незакоммиченные") {
 		t.Fatal(out)
 	}
-	put(t, a.Root, ".git/info/exclude", manifestFile+"\n")
+	put(t, a.Root, ".git/info/exclude", manifestFile+"\n.agents/\n.claude/\n.codex/\n")
 	_, out, _ = invoke(t, a, "doctor")
 	if !strings.Contains(out, "рабочее дерево чистое") {
 		t.Fatal(out)
@@ -238,6 +245,42 @@ func TestClient(t *testing.T) {
 	c = Client{Origin: s.URL, Token: "secret"}
 	if err := c.request(context.Background(), "GET", "/", nil, nil); err == nil {
 		t.Fatal("redirect accepted")
+	}
+}
+
+func TestClientErrorCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		body io.ReadCloser
+		code string
+	}{
+		{"code only", io.NopCloser(strings.NewReader(`{"error":{"code":"E_TEMPLATE_INVALID","message":"sensitive-message","details":["sensitive-details"]}}`)), "E_TEMPLATE_INVALID"},
+		{"missing code", io.NopCloser(strings.NewReader(`{"error":{"message":"sensitive-message"}}`)), ""},
+		{"broken JSON", io.NopCloser(strings.NewReader(`{"error":{"code":"E_TEMPLATE_INVALID"}`)), ""},
+		{"numeric code", io.NopCloser(strings.NewReader(`{"error":{"code":422}}`)), ""},
+		{"control characters", io.NopCloser(strings.NewReader(`{"error":{"code":"E_INVALID\nforged-log"}}`)), ""},
+		{"long code", io.NopCloser(strings.NewReader(`{"error":{"code":"E_` + strings.Repeat("A", 63) + `"}}`)), ""},
+		{"large response", io.NopCloser(strings.NewReader(`{"error":{"code":"E_TEMPLATE_INVALID","message":"` + strings.Repeat("x", 64*1024) + `"}}`)), ""},
+		{"unreadable response", brokenReader{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Client{Origin: "https://wiki.example", HTTP: &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 422, Body: tc.body}, nil
+			})}}
+			err := c.request(context.Background(), "GET", "/", nil, nil)
+			var failure apiError
+			if !errors.As(err, &failure) || failure.Status != 422 || failure.Code != tc.code {
+				t.Fatalf("unexpected error: %#v", err)
+			}
+			want := "вика вернула HTTP 422"
+			if tc.code != "" {
+				want += " (" + tc.code + ")"
+			}
+			if err.Error() != want {
+				t.Fatalf("unsafe error: %q", err.Error())
+			}
+		})
 	}
 }
 

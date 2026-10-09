@@ -130,6 +130,7 @@ func (a App) doctor(ctx context.Context) result {
 	if docsErr == nil && len(rep.Warnings) > 0 {
 		checks[len(checks)-1].Status = "warn"
 	}
+	add("skills", checkSkills(a.Root), "четыре навыка валидны для Claude Code и Codex")
 	output, err := git(ctx, a.Root, "status", "--porcelain")
 	check := Check{"git", "ok", "рабочее дерево чистое"}
 	if err != nil {
