@@ -9,6 +9,58 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestCommandsThroughSymlinkedAncestor(t *testing.T) {
+	s := server(t, nil)
+	parent := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "work")
+	if err := os.Symlink(parent, alias); err != nil {
+		t.Fatal(err)
+	}
+	a := App{Root: alias, WikiURL: s.URL, Source: "path:/wk", Cache: t.TempDir()}
+	// EvalSymlinks fails for the not-yet-existing init root under the alias.
+	if code, out, stderr := invoke(t, a, "init", "--dir", "project", "--profile", "go-service", "--offline"); code != 0 {
+		t.Fatal(code, out, stderr)
+	}
+	a.Root = filepath.Join(alias, "project")
+	if code, _, stderr := invoke(t, a, "init"); code != 0 {
+		t.Fatal(code, stderr)
+	}
+	files, _ := baseFiles()
+	os.RemoveAll(filepath.Join(a.Root, "docs"))
+	put(t, a.Root, "docs/INDEX.md", "# Docs\n")
+	put(t, a.Root, "page.md", page)
+	for _, args := range [][]string{{"policy", "sync"}, {"policy", "check"}, {"policy", "search", "Go"}, {"policy", "show", "rule-go"}, {"docs", "check"}, {"docs", "upgrade"}, {"check", "--strict"}, {"doctor"}, {"template", "list"}, {"template", "show", "go-service"}, {"propose", "--file", "page.md"}} {
+		if code, out, stderr := invoke(t, a, args...); code != 0 {
+			t.Fatal(args, code, out, stderr)
+		}
+	}
+	for name, data := range files {
+		if strings.HasPrefix(name, "docs/components/_template/") || name == "docs/INDEX.md" {
+			put(t, a.Root, name, string(data))
+		}
+	}
+	if code, out, stderr := invoke(t, a, "component", "add", "api"); code != 0 {
+		t.Fatal(code, out, stderr)
+	}
+	if code, _, _ := invokeHook(t, a, "guard-paths", toolPayload(filepath.Join(parent, "project", manifestFile), nilMap())); code != 2 {
+		t.Fatal(code)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(a.Root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := safePath(a.Root, "escape/file"); err == nil {
+		t.Fatal("accepted symlink inside aliased project")
+	}
+	// A direct symlink to the project root is also a user-owned path spelling.
+	rootAlias := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(a.Root, rootAlias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadManifest(rootAlias); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func manifest(url string) Manifest {
 	return Manifest{Version: 1, Project: "orders", Wiki: Wiki{URL: url, Profile: "go-service", Scopes: []string{"lang:go"}}, PolicyBlocks: []PolicyBlock{{File: "AGENTS.md", Profile: "go-service"}}, Docs: Docs{Root: "docs"}}
 }

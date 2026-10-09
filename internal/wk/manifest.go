@@ -121,7 +121,7 @@ func relativePath(path string) error {
 	return nil
 }
 
-// safePath checks every existing component, including the root, with Lstat.
+// safePath resolves the project root and checks only components inside it.
 // Writes repeat this check immediately before accessing the destination.
 func safePath(root, path string) (string, error) {
 	full, _, err := inspectPath(root, path)
@@ -136,10 +136,15 @@ func inspectPath(root, path string) (string, fs.FileInfo, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	// Ancestors belong to the user, not the project (e.g. /var on macOS).
+	// A not-yet-created init root cannot be resolved; inspect its children below.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
 	full := filepath.Join(abs, filepath.FromSlash(path))
-	current := string(filepath.Separator)
+	current := abs
 	var last fs.FileInfo
-	for _, part := range strings.Split(strings.TrimPrefix(full, string(filepath.Separator)), string(filepath.Separator)) {
+	for _, part := range strings.Split(path, "/") {
 		current = filepath.Join(current, part)
 		info, err := os.Lstat(current)
 		if errors.Is(err, os.ErrNotExist) {
