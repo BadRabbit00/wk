@@ -292,11 +292,20 @@ CI с `wk check --strict` и `wk`, закреплённым вне репози�
 
 ## Навыки
 
-В бинарь встроены `policy-sync`, `doc-card`, `implement-planned`, `propose-rule`.
+В бинарь встроены `policy-sync`, `doc-design`, `doc-card`, `doc-backfill`,
+`implement-planned`, `propose-rule`.
 `init --offline` копирует их в `.claude/skills/<name>/SKILL.md` и
 `.agents/skills/<name>/SKILL.md`. Это обычные версионируемые файлы; вызов —
 `/<name>` в Claude Code и `$<name>` в Codex. Существующие валидные навыки
 сохраняются с diff; невалидный навык останавливает init до записи.
+
+Навыки задают цикл «сначала документация, потом код»: `doc-design` раскладывает
+задачу на факты `draft` со ссылками на политики, человек переводит их в `planned`,
+`implement-planned` пишет код. `doc-backfill` описывает уже написанный код.
+Проект, созданный до появления `doc-design` и `doc-backfill`, получает их
+повторным `wk init` в корне проекта: доставляются только недостающие файлы,
+до этого `doctor` показывает `fail skills`. `AGENTS.md` при этом не меняется —
+новый раздел «Порядок задачи» из `AGENTS-snippet.md` переносится в него вручную.
 
 `init` и `doctor` встроенным Go-валидатором проверяют первую строку `---`, ровно
 два поля `name`/`description`, совпадение имени с каталогом, однострочное описание

@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-var skillNames = []string{"policy-sync", "doc-card", "implement-planned", "propose-rule"}
+var skillNames = []string{"policy-sync", "doc-design", "doc-card", "doc-backfill", "implement-planned", "propose-rule"}
 var skillDirs = []string{".claude/skills", ".agents/skills"}
 var skillStep = regexp.MustCompile(`(?m)^\d+[.)] .+$`)
 var bareURL = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|www\.)\S+`)

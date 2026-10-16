@@ -51,7 +51,7 @@ func TestSkillValidation(t *testing.T) {
 
 func TestEmbeddedIntegrationsMatchSources(t *testing.T) {
 	files, err := integrationFiles(assets)
-	if err != nil || len(files) != 10 {
+	if err != nil || len(files) != 14 {
 		t.Fatal(len(files), err)
 	}
 	for _, name := range skillNames {
