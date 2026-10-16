@@ -1,0 +1,51 @@
+# Release artifacts for people without Nix: static binaries and native packages.
+# The packages install wk into /usr/bin, which an agent running as the user
+# cannot overwrite; see "binary" in wk doctor.
+version: 2
+project_name: wk
+
+env:
+  - CGO_ENABLED=0
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: wk
+    main: ./cmd/cli
+    binary: wk
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X wk-cli/internal/wk.Version={{ .Version }}
+      - -X wk-cli/internal/wk.Commit={{ .ShortCommit }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "wk_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md]
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - id: packages
+    package_name: wk
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: BadRabbit00
+    homepage: https://github.com/BadRabbit00/wk
+    maintainer: BadRabbit00 <BadRabbit00@users.noreply.github.com>
+    description: Project documentation, company policies and agent hooks for wikisvc.
+    formats: [rpm, deb, archlinux]
+    bindir: /usr/bin
+    dependencies: [git]
+
+changelog:
+  use: github
+  sort: asc

@@ -73,7 +73,7 @@ func testApp(t *testing.T, s *httptest.Server) App {
 	for name, data := range files {
 		put(t, root, name, string(data))
 	}
-	return App{Root: root, Token: t.Name(), Cache: filepath.Join(t.TempDir(), "templates"), Source: "path:/example/wk"}
+	return App{Root: root, Token: t.Name(), Cache: filepath.Join(t.TempDir(), "templates"), Source: "path:/example/wk", lookPath: func(string) (string, error) { return "/usr/bin/wk", nil }, writable: func(string) bool { return false }}
 }
 
 func invoke(t *testing.T, a App, args ...string) (int, string, string) {

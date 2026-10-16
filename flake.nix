@@ -7,7 +7,11 @@
     in {
       packages = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system}; in rec {
-          wk = import ./package.nix { inherit pkgs; };
+          wk = import ./package.nix {
+            inherit pkgs;
+            commit = self.shortRev or "dirty";
+            flakeRef = if self ? rev then "github:BadRabbit00/wk/${self.rev}" else null;
+          };
           default = wk;
         });
       apps = eachSystem (system: rec {

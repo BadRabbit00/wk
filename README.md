@@ -4,6 +4,52 @@
 документация, политики, навыки и хуки агентов в отдельном Git-репозитории.
 Серверная часть реестра шаблонов находится в соседнем `../llm-wiki`.
 
+## Установка
+
+Nix не нужен. Пакет ставит `wk` в `/usr/bin` и тянет `git`. Ставь именно пакет:
+бинарь в каталоге, доступном пользователю на запись (`~/.local/bin`), агент
+может подменить, и тогда хуки проверяет подменённый чекер — `wk doctor`
+предупреждает об этом строкой `binary`.
+
+```sh
+# Fedora
+sudo dnf install https://github.com/BadRabbit00/wk/releases/download/v0.1.0/wk-0.1.0-1.x86_64.rpm
+# Arch
+sudo pacman -U https://github.com/BadRabbit00/wk/releases/download/v0.1.0/wk-0.1.0-1-x86_64.pkg.tar.zst
+# Debian/Ubuntu
+curl -LO https://github.com/BadRabbit00/wk/releases/download/v0.1.0/wk_0.1.0_amd64.deb && sudo apt install ./wk_0.1.0_amd64.deb
+
+wk version
+```
+
+Подлинность файла из релиза: `gh attestation verify FILE --repo BadRabbit00/wk`
+(сборка в GitHub Actions подписана build provenance) и `sha256sum --check checksums.txt`.
+Для arm64 — файлы `aarch64`/`arm64` в том же релизе, для macOS — `tar.gz`.
+Nix: `nix run github:BadRabbit00/wk -- …`, проекты тогда получают `flake.nix`
+с `wk`, закреплённым на ревизии релиза.
+
+Новый проект и проект с готовой документацией:
+
+```sh
+wk init --dir orders --url http://wiki.example:8787 --profile go-service
+wk init --keep --url http://wiki.example:8787 --profile go-service   # в корне существующего проекта
+wk doctor
+```
+
+Без вики: `wk init --offline …`; работают документация, хуки и навыки,
+синхронизация политик — после появления вики (`wk policy sync`).
+Каждый `init` кладёт `.github/workflows/wk.yml`: CI скачивает релиз `wk`,
+которым создан проект, проверяет checksum и аттестацию и выполняет
+`wk check --strict`. Это гейт, который агент не обходит; файл защищён хуками.
+
+## Релиз
+
+Тег `vX.Y.Z` запускает `.github/workflows/release.yml`: `nix flake check`
+(lint, тесты, 100% покрытия), затем GoReleaser собирает статические бинарники
+linux/darwin amd64/arm64, пакеты rpm/deb/archlinux, `checksums.txt` и
+аттестации. Версию в `package.nix` меняй тем же коммитом, что и тег.
+Пробная локальная сборка: `nix shell nixpkgs#goreleaser nixpkgs#go -c goreleaser release --snapshot --clean`.
+
 ## Сборка и разработка
 
 ```sh
@@ -43,11 +89,10 @@ nix develop path:. -c wk doctor --json
 Без шаблона требуется `--profile`, с шаблоном профиль и scopes берутся из него.
 `--scopes lang:go,app:orders` задаёт scopes при инициализации.
 
-Собранный Nix-пакет записывает в новый `flake.nix` ссылку на свой неизменяемый
-исходник в Nix store. Для распространяемого репозитория задай
-`--wk-flake git+https://host/team/wk` либо `WK_FLAKE`: полученный flake можно
-зафиксировать обычным `nix flake lock`. При запуске через `go run` этот параметр
-нужен явно, например `--wk-flake path:/home/BadRabbit/work/wk`.
+Nix-пакет, собранный из опубликованной ревизии, записывает в новый `flake.nix`
+ссылку `github:BadRabbit00/wk/<rev>`; из грязного дерева — путь в Nix store.
+`--wk-flake` либо `WK_FLAKE` задают ссылку явно. Без неё (пакет из релиза,
+`go run`) `flake.nix` и `.envrc` не создаются: хуки вызывают установленный `wk`.
 
 ## Команды
 
@@ -58,11 +103,12 @@ stderr. `hook` сохраняет протокол события независ
 | Команда | Назначение |
 |---|---|
 | `init [--profile ID] [--template ID] [--dir DIR]` | шаблон документации, блок политик, манифест, git, flake, gitignore, хуки и навыки |
-| `init --existing` | `docs/`, `AGENTS.md`, манифест, отсутствующие хуки/навыки, `flake.nix` и `.envrc` |
+| `init --existing` | `docs/`, `AGENTS.md`, манифест, отсутствующие хуки/навыки, CI-гейт, с Nix — `flake.nix` и `.envrc` |
 | `init --keep` | Принять готовый проект: существующие `docs/`, `AGENTS.md`, `flake.nix` не меняются, добавляются только недостающие файлы и манифест |
 | `init --force --existing` | Перезапись конфликтующих проектных файлов; существующие хуки и навыки сохраняются |
 | `init --offline --template ID` | Проверенный локальный кэш; политический блок помечается как ещё не загруженный |
-| `doctor` | Упорядоченные `ok`/`warn`/`fail`: манифест, health, whoami, профиль, scopes, политики, MCP, агент, docs, навыки, git |
+| `doctor` | Упорядоченные `ok`/`warn`/`fail`: манифест, health, whoami, профиль, scopes, политики, MCP, агент, docs, навыки, `binary` (`wk` в PATH и не доступен на запись), git |
+| `version` | Версия и коммит сборки |
 | `component add NAME [--lang LANG-id] [--kind svc\|lib] [--with-ai]` | Копия локального `_template`, draft, ID/owner, строка INDEX; дубликаты запрещены |
 | `docs check [--docs DIR] [--code DIR] [--strict] [--no-registry]` | Встроенная проверка документации и генерация реестра ID |
 | `docs upgrade` | Удаление старого `docs/_meta/check.py` |
@@ -78,14 +124,15 @@ stderr. `hook` сохраняет протокол события независ
 сообщает, что анонимный доступ выключен; reader получает предупреждение.
 
 Повторный `init` с валидным манифестом без `--force` доставляет отсутствующие хуки,
-навыки, `flake.nix` и `.envrc`, сохраняя остальные файлы и их mtime. Если всё уже
-установлено, изменений нет. `--force` не отменяет требование `--existing` для непустого каталога.
+навыки, CI-гейт и (с Nix) `flake.nix` и `.envrc`, сохраняя остальные файлы и их mtime.
+Если всё уже установлено, изменений нет. `--force` не отменяет требование `--existing`
+для непустого каталога.
 
-Хуки вызывают `wk` из PATH, поэтому каждый `init` создаёт недостающие `flake.nix`
-(devShell с закреплённым `wk`) и `.envrc` (`use flake`). Существующий `flake.nix`
-не меняется; если в нём нет `wk.packages`, init печатает предупреждение.
-Без `--wk-flake`/`WK_FLAKE` в существующем проекте flake не создаётся, тоже
-с предупреждением. Запускай агента из `nix develop` или через direnv.
+Хуки вызывают `wk` из PATH. Пакет из релиза кладёт его в `/usr/bin`. С Nix
+(`--wk-flake`, `WK_FLAKE` или пакет flake) каждый `init` создаёт недостающие
+`flake.nix` (devShell с закреплённым `wk`) и `.envrc` (`use flake`); существующий
+`flake.nix` не меняется, а если в нём нет `wk.packages`, init печатает предупреждение.
+Тогда запускай агента из `nix develop` или через direnv.
 
 Без `--force` и `--keep` init с конфликтующими файлами завершается до записи и
 ничего не меняет. `--force` перезаписывает их скелетом, `--keep` (включает
@@ -259,8 +306,8 @@ unified diff в stderr и предлагает применить изменен
 | `Stop` | `wk hook check` | Ошибки, строгие предупреждения или устаревший блок → 2, причина одной строкой в stderr |
 
 Защищённые пути: `docs/_meta/check.py`, `.claude/settings.json`, `.codex/hooks.json`,
-`.wiki-project.yaml`, `flake.nix`, `flake.lock`, `.envrc` (в корне проекта).
-Последние три закрепляют версию `wk`, которую вызывают хуки: агент не может
+`.wiki-project.yaml`, `flake.nix`, `flake.lock`, `.envrc`, `.github/workflows/wk.yml` (в корне проекта).
+flake-файлы закрепляют версию `wk`, которую вызывают хуки, а `wk.yml` — версию в CI: агент не может
 подменить проверяющий бинарь. Зависимости devShell добавляет человек.
 
 `stop_hook_active: true` пропускает проверку `Stop`, чтобы исключить бесконечное

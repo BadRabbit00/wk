@@ -15,16 +15,21 @@ import (
 	"strings"
 )
 
+// Version and Commit are set at build time (GoReleaser, Nix); a plain go build reports dev.
+var Version = "dev"
+var Commit = ""
+
 const help = `wk — проекты и вика
-  init [--url ORIGIN] [--profile ID] [--template ID] [--existing] [--dir DIR] [--force] [--offline]
+  init [--url ORIGIN] [--profile ID] [--template ID] [--existing | --keep] [--dir DIR] [--force] [--offline]
   doctor [--json]
+  version
   component add NAME [--lang LANG-id] [--kind svc|lib] [--with-ai]
   check [--strict] [--json]
   docs check [--docs DIR] [--code DIR] [--strict] [--no-registry] | upgrade
   policy sync | check | search QUERY | show RULE-ID
   template list | show ID
   propose --file PAGE.md [--title TITLE] [--kind manual]
-  hook check | guard-block | guard-paths | policy-stale (JSON события на stdin)
+  hook check | guard-block | guard-paths | guard-shell | policy-stale (JSON события на stdin)
 Все команды поддерживают --json. URL для init: --url или WIKI_URL.
 `
 
@@ -40,6 +45,8 @@ type App struct {
 	integrations fs.FS
 	writeFile    func(string, string, []byte) error
 	readCache    func(string) ([]os.DirEntry, error)
+	lookPath     func(string) (string, error)
+	writable     func(string) bool
 }
 
 type result struct {
@@ -180,6 +187,13 @@ func parseFlags(f *flag.FlagSet, args []string) error {
 func (a App) execute(ctx context.Context, args []string) (result, error) {
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h")) {
 		return result{Data: map[string]string{"help": help}, Text: help}, nil
+	}
+	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
+		text := "wk " + Version
+		if Commit != "" {
+			text += " (" + Commit + ")"
+		}
+		return result{Data: map[string]string{"version": Version, "commit": Commit}, Text: text}, nil
 	}
 	if args[0] == "init" {
 		return a.init(ctx, args[1:])

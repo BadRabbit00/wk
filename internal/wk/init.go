@@ -147,9 +147,6 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 		return result{}, err
 	}
 	if !*existing {
-		if _, ok := plan["flake.nix"]; !ok && *source == "" {
-			return result{}, errors.New("укажи --wk-flake или WK_FLAKE для devShell")
-		}
 		ignore := strings.TrimRight(string(plan[".gitignore"]), "\n") + "\nresult\nresult-*\n.direnv\n.env\n"
 		plan[".gitignore"] = []byte(strings.TrimLeft(ignore, "\n"))
 	}
@@ -258,22 +255,28 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 	return result{Data: map[string]any{"project": m.Project, "changed": true, "files": sortedKeys(plan), "kept": sortedKeys(kept), "template": m.Template, "integration_diff": diff}, Text: text, Stderr: strings.Join(notices, "\n")}, nil
 }
 
-// toolchainFiles returns the missing flake.nix and .envrc: hooks call `wk` from
-// PATH, so a project without the pinned devShell silently loses its gate.
-// Existing files belong to the project and are only inspected.
+// toolchainFiles returns the missing files that make the checks run: the CI
+// gate always, and with a wk flake source also flake.nix and .envrc, so Nix
+// users get the pinned wk on PATH. Without a source wk comes from the installed
+// package. Existing files belong to the project and are only inspected.
 func toolchainFiles(root, source string) (map[string][]byte, []string, error) {
 	files := map[string][]byte{}
 	var notices []string
+	if _, info, err := inspectPath(root, ciWorkflowFile); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", ciWorkflowFile, err)
+	} else if info == nil {
+		files[ciWorkflowFile] = []byte(ciWorkflow(Version))
+	}
+	if source == "" {
+		return files, nil, nil
+	}
 	full, info, err := inspectPath(root, "flake.nix")
 	if err != nil {
 		return nil, nil, fmt.Errorf("flake.nix: %w", err)
 	}
-	switch {
-	case info == nil && source != "":
+	if info == nil {
 		files["flake.nix"] = []byte(projectFlake(source))
-	case info == nil:
-		notices = append(notices, "flake.nix не создан: укажи --wk-flake или WK_FLAKE, иначе хуки не найдут wk в PATH.")
-	default:
+	} else {
 		data, err := readLimited(full, 1<<20)
 		if err != nil {
 			return nil, nil, fmt.Errorf("flake.nix: %w", err)
@@ -288,6 +291,46 @@ func toolchainFiles(root, source string) (map[string][]byte, []string, error) {
 		files[".envrc"] = []byte("use flake\n")
 	}
 	return files, notices, nil
+}
+
+const ciWorkflowFile = ".github/workflows/wk.yml"
+const releaseRepo = "BadRabbit00/wk"
+
+// ciWorkflow pins the release that created the project; a dev build takes the latest.
+func ciWorkflow(version string) string {
+	tag := ""
+	if version != "dev" {
+		tag = "v" + strings.TrimPrefix(version, "v") + " "
+	}
+	return `# Created by wk init. Hooks give agents fast feedback; this job is the gate
+# no agent can bypass. wk refuses agent edits to this file: a human changes it.
+name: wk
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install wk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download ` + tag + `--repo ` + releaseRepo + ` --pattern 'wk_*_linux_amd64.tar.gz' --pattern checksums.txt
+          sha256sum --check --ignore-missing checksums.txt
+          gh attestation verify wk_*_linux_amd64.tar.gz --repo ` + releaseRepo + `
+          tar -xzf wk_*_linux_amd64.tar.gz wk
+          sudo install -m 0755 wk /usr/local/bin/wk
+      - name: wk check --strict
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        # Exit 3: documentation is clean and the wiki is unreachable from CI;
+        # documentation errors still fail with 1.
+        run: wk check --strict || test $? -eq 3
+`
 }
 
 func baseFiles() (map[string][]byte, error) {

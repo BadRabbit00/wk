@@ -16,7 +16,7 @@ func TestCommandsThroughSymlinkedAncestor(t *testing.T) {
 	if err := os.Symlink(parent, alias); err != nil {
 		t.Fatal(err)
 	}
-	a := App{Root: alias, WikiURL: s.URL, Source: "path:/wk", Cache: t.TempDir()}
+	a := App{Root: alias, WikiURL: s.URL, Source: "path:/wk", Cache: t.TempDir(), lookPath: func(string) (string, error) { return "/usr/bin/wk", nil }, writable: func(string) bool { return false }}
 	// EvalSymlinks fails for the not-yet-existing init root under the alias.
 	if code, out, stderr := invoke(t, a, "init", "--dir", "project", "--profile", "go-service", "--offline"); code != 0 {
 		t.Fatal(code, out, stderr)

@@ -96,7 +96,6 @@ func TestInitErrors(t *testing.T) {
 		{"no url", nil, func(t *testing.T, a *App) { a.WikiURL = "" }},
 		{"bad profile", nil, func(t *testing.T, a *App) { a.WikiURL = s.URL }},
 		{"bad project", []string{"--profile", "go-service", "--project", "BAD"}, nil},
-		{"missing flake", []string{"--profile", "go-service"}, func(t *testing.T, a *App) { a.Source = "" }},
 		{"nonempty", []string{"--profile", "go-service"}, func(t *testing.T, a *App) { put(t, a.Root, "README.md", "existing") }},
 		{"invalid manifest", nil, func(t *testing.T, a *App) { put(t, a.Root, manifestFile, "broken") }},
 		{"symlink manifest", nil, func(t *testing.T, a *App) {
@@ -355,9 +354,14 @@ func TestToolchainDelivery(t *testing.T) {
 	}
 	os.Remove(filepath.Join(a.Root, "flake.nix"))
 	a.Source = ""
-	if code, _, stderr := invoke(t, a, "init"); code != 0 || !strings.Contains(stderr, "flake.nix не создан") {
+	// Without a wk flake (a packaged binary) no Nix files are created and nothing is reported.
+	if code, _, stderr := invoke(t, a, "init"); code != 0 || stderr != "" {
 		t.Fatal(code, stderr)
 	}
+	if _, err := os.Stat(filepath.Join(a.Root, "flake.nix")); !os.IsNotExist(err) {
+		t.Fatal("flake.nix created without a wk flake", err)
+	}
+	a.Source = "path:/wk"
 	put(t, a.Root, "flake.nix", "{ outputs = _: {}; }\n")
 	if code, _, stderr := invoke(t, a, "init"); code != 0 || !strings.Contains(stderr, "добавь wk.packages") {
 		t.Fatal(code, stderr)
@@ -366,8 +370,8 @@ func TestToolchainDelivery(t *testing.T) {
 	if code, _, stderr := invoke(t, a, "init"); code != 0 || stderr != "" {
 		t.Fatal(code, stderr)
 	}
-	// A template's own flake.nix suppresses the notice about a missing source.
-	tpl := App{Root: t.TempDir(), WikiURL: server(t, map[string]response{"/api/v1/schema/project-templates/go-service": {200, strings.Replace(templateYAML, "files:", "files:\n  - {path: flake.nix, content: \"{ wk.packages = 1; }\"}", 1), ""}}).URL, Cache: t.TempDir()}
+	// A template's own flake.nix wins over the generated one.
+	tpl := App{Root: t.TempDir(), WikiURL: server(t, map[string]response{"/api/v1/schema/project-templates/go-service": {200, strings.Replace(templateYAML, "files:", "files:\n  - {path: flake.nix, content: \"{ wk.packages = 1; }\"}", 1), ""}}).URL, Cache: t.TempDir(), Source: "path:/wk"}
 	if code, _, stderr := invoke(t, tpl, "init", "--template", "go-service", "--project", "tpl"); code != 0 || strings.Contains(stderr, "flake.nix") {
 		t.Fatal(code, stderr)
 	}
@@ -375,6 +379,10 @@ func TestToolchainDelivery(t *testing.T) {
 		func(root string) { os.Symlink("x", filepath.Join(root, "flake.nix")) },
 		func(root string) { os.Mkdir(filepath.Join(root, "flake.nix"), 0755) },
 		func(root string) { os.Symlink("x", filepath.Join(root, ".envrc")) },
+		func(root string) {
+			os.Mkdir(filepath.Join(root, ".github"), 0755)
+			os.Symlink("x", filepath.Join(root, ".github/workflows"))
+		},
 	} {
 		root := t.TempDir()
 		broken(root)
@@ -402,5 +410,81 @@ func TestEmbeddedSkeletonHasNoExample(t *testing.T) {
 		if strings.Contains(name, "example") {
 			t.Fatal("embedded skeleton ships demo content", name)
 		}
+	}
+}
+
+func TestTemplateFlakeWinsAndCIWorkflow(t *testing.T) {
+	tpl := App{Root: t.TempDir(), WikiURL: server(t, map[string]response{"/api/v1/schema/project-templates/go-service": {200, strings.Replace(templateYAML, "files:", "files:\n  - {path: flake.nix, content: mine}", 1), ""}}).URL, Cache: t.TempDir(), Source: "path:/wk"}
+	if code, _, stderr := invoke(t, tpl, "init", "--template", "go-service", "--project", "tpl"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if data, _ := os.ReadFile(filepath.Join(tpl.Root, "flake.nix")); string(data) != "mine" {
+		t.Fatal(string(data))
+	}
+	data, err := os.ReadFile(filepath.Join(tpl.Root, ciWorkflowFile))
+	if err != nil || !strings.Contains(string(data), "wk check --strict || test $? -eq 3") || !strings.Contains(string(data), "gh attestation verify") {
+		t.Fatal(string(data), err)
+	}
+	if got := ciWorkflow("dev"); !strings.Contains(got, "gh release download --repo "+releaseRepo) {
+		t.Fatal("dev build must take the latest release", got)
+	}
+	if got := ciWorkflow("0.1.0"); !strings.Contains(got, "gh release download v0.1.0 --repo ") {
+		t.Fatal("release build must pin its own tag", got)
+	}
+}
+
+func TestVersion(t *testing.T) {
+	a := App{Root: t.TempDir()}
+	if code, out, _ := invoke(t, a, "version"); code != 0 || out != "wk dev\n" {
+		t.Fatal(code, out)
+	}
+	Version, Commit = "0.1.0", "abc1234"
+	defer func() { Version, Commit = "dev", "" }()
+	for _, args := range [][]string{{"--version"}, {"version"}} {
+		if code, out, _ := invoke(t, a, args...); code != 0 || out != "wk 0.1.0 (abc1234)\n" {
+			t.Fatal(code, out)
+		}
+	}
+	if code, out, _ := invoke(t, a, "version", "--json"); code != 0 || out != `{"commit":"abc1234","version":"0.1.0"}`+"\n" {
+		t.Fatal(code, out)
+	}
+}
+
+func TestBinaryCheck(t *testing.T) {
+	found := func(string) (string, error) { return "/usr/bin/wk", nil }
+	cases := []struct {
+		look     func(string) (string, error)
+		writable bool
+		status   string
+	}{
+		{func(string) (string, error) { return "", os.ErrNotExist }, false, "fail"},
+		{found, true, "warn"},
+		{found, false, "ok"},
+	}
+	for _, tc := range cases {
+		check := App{lookPath: tc.look, writable: func(string) bool { return tc.writable }}.binaryCheck()
+		if check.Status != tc.status {
+			t.Fatal(check)
+		}
+	}
+	// Defaults: the real PATH and filesystem; only the shape of the result is stable here.
+	if check := (App{}).binaryCheck(); check.Name != "binary" {
+		t.Fatal(check)
+	}
+	dir := t.TempDir()
+	put(t, dir, "wk", "binary")
+	if err := os.Symlink(filepath.Join(dir, "wk"), filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if !userWritable(filepath.Join(dir, "link")) {
+		t.Fatal("own temp file reported read-only")
+	}
+	locked := filepath.Join(dir, "locked")
+	put(t, locked, "wk", "binary")
+	os.Chmod(filepath.Join(locked, "wk"), 0555)
+	os.Chmod(locked, 0555)
+	defer os.Chmod(locked, 0755)
+	if os.Geteuid() != 0 && userWritable(filepath.Join(locked, "wk")) {
+		t.Fatal("read-only binary reported writable")
 	}
 }

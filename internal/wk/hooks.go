@@ -18,7 +18,7 @@ const blockGuardMessage = "Блок политик генерируется. И�
 const staleContext = `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Политики компании изменились, выполни ` + "`wk policy sync`" + `."}}`
 
 // Checks, their configuration and the toolchain that provides wk are changed by a human.
-var protectedPaths = []string{"docs/_meta/check.py", ".claude/settings.json", ".codex/hooks.json", manifestFile, "flake.nix", "flake.lock", ".envrc"}
+var protectedPaths = []string{"docs/_meta/check.py", ".claude/settings.json", ".codex/hooks.json", manifestFile, "flake.nix", "flake.lock", ".envrc", ciWorkflowFile}
 
 // Directories whose contents configure the checks; shell writes into them are refused.
 var protectedDirs = []string{".claude", ".codex", "_meta"}

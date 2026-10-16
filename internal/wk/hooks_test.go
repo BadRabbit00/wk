@@ -321,6 +321,7 @@ func TestGuardShell(t *testing.T) {
 		{"rm .claude/settings.json", 2},
 		{"cd .claude && rm -f settings.json", 2},
 		{"cat .wiki-project.yaml", 2},
+		{"rm .github/workflows/wk.yml", 2},
 		{"sed -i 's/a/b/' flake.nix", 2},
 		{"echo use nix > .envrc", 2},
 		{"git checkout HEAD~3 -- flake.lock", 2},

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 type Check struct {
@@ -131,6 +133,7 @@ func (a App) doctor(ctx context.Context) result {
 		checks[len(checks)-1].Status = "warn"
 	}
 	add("skills", checkSkills(a.Root), "шесть навыков валидны для Claude Code и Codex")
+	checks = append(checks, a.binaryCheck())
 	output, err := git(ctx, a.Root, "status", "--porcelain")
 	check := Check{"git", "ok", "рабочее дерево чистое"}
 	if err != nil {
@@ -161,4 +164,32 @@ func git(ctx context.Context, root string, args ...string) (string, error) {
 		return "", errors.New("команда git не выполнена")
 	}
 	return string(output), nil
+}
+
+// Hooks run whatever `wk` PATH resolves to. A binary the user (and so the agent)
+// can overwrite is a checker the checked party can replace.
+func (a App) binaryCheck() Check {
+	look, writable := a.lookPath, a.writable
+	if look == nil {
+		look = exec.LookPath
+	}
+	if writable == nil {
+		writable = userWritable
+	}
+	path, err := look("wk")
+	if err != nil {
+		return Check{"binary", "fail", "wk не найден в PATH: хуки агентов не выполнятся; установи пакет wk"}
+	}
+	if writable(path) {
+		return Check{"binary", "warn", path + " доступен на запись: агент может подменить проверяющий бинарь; установи пакет wk в /usr/bin"}
+	}
+	return Check{"binary", "ok", path + ", wk " + Version}
+}
+
+func userWritable(path string) bool {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	const writeOK = 2 // W_OK: replacing needs write access to the file or its directory.
+	return syscall.Access(path, writeOK) == nil || syscall.Access(filepath.Dir(path), writeOK) == nil
 }
