@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -295,5 +296,111 @@ func TestBootstrapRun(t *testing.T) {
 	t.Setenv("WK_FLAKE", "path:/wk")
 	if code := Run(context.Background(), []string{"--json", "help"}, &out, &err); code != 0 {
 		t.Fatal(code)
+	}
+}
+
+// --keep adopts a project with hand-written documentation: nothing existing is rewritten.
+func TestInitKeepAdoptsExistingDocs(t *testing.T) {
+	s := server(t, nil)
+	a := App{Root: t.TempDir(), WikiURL: s.URL, Source: "path:/wk", Cache: t.TempDir()}
+	mine := map[string]string{"docs/INDEX.md": "# My index\n", "docs/system/domain.md": "# Mine\n", "AGENTS.md": "# My agents\n", "docs/_meta/check.py": "print('legacy')\n"}
+	for name, text := range mine {
+		put(t, a.Root, name, text)
+	}
+	code, out, stderr := invoke(t, a, "init", "--keep", "--profile", "go-service", "--project", "adopted", "--json")
+	if code != 0 || !strings.Contains(stderr, "AGENTS.md сохранён без изменений") {
+		t.Fatal(code, out, stderr)
+	}
+	var report struct{ Kept, Files []string }
+	if err := json.Unmarshal([]byte(out), &report); err != nil || !slices.Contains(report.Kept, "docs/INDEX.md") || !slices.Contains(report.Files, "flake.nix") || !slices.Contains(report.Files, ".envrc") {
+		t.Fatal(out, err)
+	}
+	for name, text := range mine {
+		if data, _ := os.ReadFile(filepath.Join(a.Root, name)); string(data) != text {
+			t.Fatal("rewrote", name, string(data))
+		}
+	}
+	for _, name := range []string{manifestFile, "docs/system/flows.md", ".claude/settings.json", ".envrc"} {
+		if _, err := os.Stat(filepath.Join(a.Root, name)); err != nil {
+			t.Fatal(name, err)
+		}
+	}
+	if code, _, stderr := invoke(t, a, "init", "--keep", "--force"); code != 1 || !strings.Contains(stderr, "несовместимы") {
+		t.Fatal(code, stderr)
+	}
+	b := App{Root: t.TempDir(), WikiURL: s.URL, Source: "path:/wk"}
+	os.Mkdir(filepath.Join(b.Root, "docs"), 0755)
+	if err := os.Symlink(t.TempDir(), filepath.Join(b.Root, "docs/system")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := invoke(t, b, "init", "--keep", "--profile", "go-service", "--project", "linked"); code != 1 || !strings.Contains(stderr, "симлинки") {
+		t.Fatal(code, stderr)
+	}
+}
+
+func TestToolchainDelivery(t *testing.T) {
+	s := server(t, nil)
+	// Re-init of an initialized project delivers the missing devShell too.
+	a := App{Root: t.TempDir(), WikiURL: s.URL, Source: "path:/wk", Cache: t.TempDir()}
+	if code, _, stderr := invoke(t, a, "init", "--profile", "go-service", "--project", "orders"); code != 0 {
+		t.Fatal(stderr)
+	}
+	os.Remove(filepath.Join(a.Root, "flake.nix"))
+	os.Remove(filepath.Join(a.Root, ".envrc"))
+	if code, out, _ := invoke(t, a, "init", "--json"); code != 0 || !strings.Contains(out, `"flake.nix"`) || !strings.Contains(out, `".envrc"`) {
+		t.Fatal(code, out)
+	}
+	if data, _ := os.ReadFile(filepath.Join(a.Root, ".envrc")); string(data) != "use flake\n" {
+		t.Fatal(string(data))
+	}
+	os.Remove(filepath.Join(a.Root, "flake.nix"))
+	a.Source = ""
+	if code, _, stderr := invoke(t, a, "init"); code != 0 || !strings.Contains(stderr, "flake.nix не создан") {
+		t.Fatal(code, stderr)
+	}
+	put(t, a.Root, "flake.nix", "{ outputs = _: {}; }\n")
+	if code, _, stderr := invoke(t, a, "init"); code != 0 || !strings.Contains(stderr, "добавь wk.packages") {
+		t.Fatal(code, stderr)
+	}
+	put(t, a.Root, "flake.nix", projectFlake("path:/wk"))
+	if code, _, stderr := invoke(t, a, "init"); code != 0 || stderr != "" {
+		t.Fatal(code, stderr)
+	}
+	// A template's own flake.nix suppresses the notice about a missing source.
+	tpl := App{Root: t.TempDir(), WikiURL: server(t, map[string]response{"/api/v1/schema/project-templates/go-service": {200, strings.Replace(templateYAML, "files:", "files:\n  - {path: flake.nix, content: \"{ wk.packages = 1; }\"}", 1), ""}}).URL, Cache: t.TempDir()}
+	if code, _, stderr := invoke(t, tpl, "init", "--template", "go-service", "--project", "tpl"); code != 0 || strings.Contains(stderr, "flake.nix") {
+		t.Fatal(code, stderr)
+	}
+	for _, broken := range []func(root string){
+		func(root string) { os.Symlink("x", filepath.Join(root, "flake.nix")) },
+		func(root string) { os.Mkdir(filepath.Join(root, "flake.nix"), 0755) },
+		func(root string) { os.Symlink("x", filepath.Join(root, ".envrc")) },
+	} {
+		root := t.TempDir()
+		broken(root)
+		if _, _, err := toolchainFiles(root, "path:/wk"); err == nil {
+			t.Fatal("accepted broken toolchain path")
+		}
+		b := App{Root: root, WikiURL: s.URL, Source: "path:/wk"}
+		if code, _, _ := invoke(t, b, "init", "--existing", "--profile", "go-service", "--project", "broken"); code != 1 {
+			t.Fatal("init accepted broken toolchain path")
+		}
+		saveManifest(t, root, manifest(s.URL))
+		if code, _, _ := invoke(t, b, "init"); code != 1 {
+			t.Fatal("re-init accepted broken toolchain path")
+		}
+	}
+}
+
+// The demo project lives in docs-template/example and testdata; it must never reach a project.
+func TestEmbeddedSkeletonHasNoExample(t *testing.T) {
+	files, err := baseFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range files {
+		if strings.Contains(name, "example") {
+			t.Fatal("embedded skeleton ships demo content", name)
+		}
 	}
 }

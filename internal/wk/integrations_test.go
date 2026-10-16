@@ -74,8 +74,8 @@ func TestEmbeddedIntegrationsMatchSources(t *testing.T) {
 			Hooks map[string][]struct {
 				Matcher string
 				Hooks   []struct {
-					Type, Command string
-					Timeout       int
+					Type, Command, OnFailure string
+					Timeout                  int
 				}
 			}
 		}
@@ -85,7 +85,7 @@ func TestEmbeddedIntegrationsMatchSources(t *testing.T) {
 		count := 0
 		for event, groups := range config.Hooks {
 			for _, group := range groups {
-				if event == "PreToolUse" && group.Matcher != "Edit|Write|MultiEdit|NotebookEdit" {
+				if event == "PreToolUse" && group.Matcher != "Edit|Write|MultiEdit|NotebookEdit" && group.Matcher != "Bash" {
 					t.Fatal(group.Matcher)
 				}
 				if event == "SessionStart" && group.Matcher != "startup|resume" {
@@ -95,6 +95,17 @@ func TestEmbeddedIntegrationsMatchSources(t *testing.T) {
 					count++
 					if hook.Type != "command" || !strings.HasPrefix(hook.Command, "wk hook ") {
 						t.Fatal(hook)
+					}
+					// Claude Code fails closed when wk is missing; Codex has no such field.
+					wantFailure := ""
+					if source == "claude-settings.json" && event != "SessionStart" {
+						wantFailure = "block"
+					}
+					if hook.OnFailure != wantFailure {
+						t.Fatal(source, hook)
+					}
+					if (group.Matcher == "Bash") != (hook.Command == "wk hook guard-shell") {
+						t.Fatal(group.Matcher, hook)
 					}
 					wantTimeout := 10
 					if event == "PreToolUse" {
@@ -106,7 +117,7 @@ func TestEmbeddedIntegrationsMatchSources(t *testing.T) {
 				}
 			}
 		}
-		if count != 4 {
+		if count != 5 {
 			t.Fatal(count)
 		}
 		original, err := os.ReadFile("../../../hooks/install/" + source)

@@ -23,10 +23,20 @@ func (a App) integrationBundle() fs.FS {
 	return assets
 }
 
-func (a App) installIntegrations(root, project string) (result, error) {
-	plan, notices, err := planIntegrations(root, a.integrationBundle())
+func (a App) installIntegrations(root, project, source string) (result, error) {
+	plan, diff, err := planIntegrations(root, a.integrationBundle())
 	if err != nil {
 		return result{}, err
+	}
+	toolchain, notices, err := toolchainFiles(root, source)
+	if err != nil {
+		return result{}, err
+	}
+	for name, data := range toolchain {
+		plan[name] = data
+	}
+	if diff != "" {
+		notices = append(notices, diff)
 	}
 	if a.Token != "" {
 		for name, data := range plan {
@@ -42,9 +52,9 @@ func (a App) installIntegrations(root, project string) (result, error) {
 	}
 	message := "Проект уже инициализирован; без изменений"
 	if len(plan) > 0 {
-		message = "Установлены хуки и навыки; изменения не закоммичены"
+		message = "Установлены недостающие хуки, навыки и окружение; изменения не закоммичены"
 	}
-	return result{Data: map[string]any{"project": project, "changed": len(plan) > 0, "files": sortedKeys(plan), "integration_diff": notices}, Text: message, Stderr: notices}, nil
+	return result{Data: map[string]any{"project": project, "changed": len(plan) > 0, "files": sortedKeys(plan), "integration_diff": diff}, Text: message, Stderr: strings.Join(notices, "\n")}, nil
 }
 
 func validateSkill(name string, data []byte) error {

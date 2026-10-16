@@ -29,6 +29,7 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 	source := f.String("wk-flake", a.Source, "flake providing wk")
 	existing := f.Bool("existing", false, "existing project")
 	force := f.Bool("force", false, "overwrite conflicting files")
+	keep := f.Bool("keep", false, "keep every existing file, add only missing ones")
 	offline := f.Bool("offline", false, "use cached template")
 	if err := parseFlags(f, args); err != nil {
 		return result{}, err
@@ -36,6 +37,10 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 	if f.NArg() != 0 {
 		return result{}, errors.New("init не принимает позиционные аргументы")
 	}
+	if *keep && *force {
+		return result{}, errors.New("--keep и --force несовместимы")
+	}
+	*existing = *existing || *keep
 	root := *dir
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(a.Root, root)
@@ -53,7 +58,7 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 		if oldErr != nil {
 			return result{}, oldErr
 		}
-		return a.installIntegrations(root, old.Project)
+		return a.installIntegrations(root, old.Project, *source)
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -142,19 +147,46 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 		return result{}, err
 	}
 	if !*existing {
-		if _, ok := plan["flake.nix"]; !ok {
-			if *source == "" {
-				return result{}, errors.New("укажи --wk-flake или WK_FLAKE для devShell")
-			}
-			plan["flake.nix"] = []byte(projectFlake(*source))
+		if _, ok := plan["flake.nix"]; !ok && *source == "" {
+			return result{}, errors.New("укажи --wk-flake или WK_FLAKE для devShell")
 		}
 		ignore := strings.TrimRight(string(plan[".gitignore"]), "\n") + "\nresult\nresult-*\n.direnv\n.env\n"
 		plan[".gitignore"] = []byte(strings.TrimLeft(ignore, "\n"))
+	}
+	toolchain, notices, err := toolchainFiles(root, *source)
+	if err != nil {
+		return result{}, err
+	}
+	if _, ok := plan["flake.nix"]; ok {
+		notices = nil // the template brings its own flake
+	}
+	for name, data := range toolchain {
+		if _, ok := plan[name]; !ok {
+			plan[name] = data
+		}
+	}
+	// --keep adopts a project as it is: nothing that exists is rewritten.
+	kept := map[string]bool{}
+	if *keep {
+		for _, name := range sortedKeys(plan) {
+			_, info, err := inspectPath(root, name)
+			if err != nil {
+				return result{}, fmt.Errorf("%s: %w", name, err)
+			}
+			if info != nil {
+				kept[name] = true
+				delete(plan, name)
+			}
+		}
 	}
 	// The initial block is returned by the server; wk does not compile policies.
 	for _, block := range m.PolicyBlocks {
 		if *existing && block.File != "AGENTS.md" && !strings.HasPrefix(block.File, "docs/") {
 			return result{}, errors.New("--existing разрешает только docs/, AGENTS.md и манифест")
+		}
+		if kept[block.File] {
+			notices = append(notices, block.File+" сохранён без изменений; блок политик добавит `wk policy sync`.")
+			continue
 		}
 		if *offline {
 			plan[block.File] = append(plan[block.File], []byte("\n\nПолитики не загружены: offline init; требуется wk policy sync.\n")...)
@@ -172,9 +204,12 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 	}
 	data, _ := yaml.Marshal(m)
 	plan[manifestFile] = data
-	integrations, notices, err := planIntegrations(root, a.integrationBundle())
+	integrations, diff, err := planIntegrations(root, a.integrationBundle())
 	if err != nil {
 		return result{}, err
+	}
+	if diff != "" {
+		notices = append(notices, diff)
 	}
 	// Template files cannot replace the installed harness configuration or skills.
 	delete(plan, ".claude/settings.json")
@@ -216,7 +251,43 @@ func (a App) init(ctx context.Context, args []string) (result, error) {
 	if err := a.write(root, manifestFile, plan[manifestFile]); err != nil {
 		return result{}, err
 	}
-	return result{Data: map[string]any{"project": m.Project, "changed": true, "files": sortedKeys(plan), "template": m.Template, "integration_diff": notices}, Text: "Инициализирован проект " + m.Project + "; изменения не закоммичены", Stderr: notices}, nil
+	text := "Инициализирован проект " + m.Project + "; изменения не закоммичены"
+	if len(kept) > 0 {
+		text += fmt.Sprintf("; существующих файлов сохранено без изменений: %d", len(kept))
+	}
+	return result{Data: map[string]any{"project": m.Project, "changed": true, "files": sortedKeys(plan), "kept": sortedKeys(kept), "template": m.Template, "integration_diff": diff}, Text: text, Stderr: strings.Join(notices, "\n")}, nil
+}
+
+// toolchainFiles returns the missing flake.nix and .envrc: hooks call `wk` from
+// PATH, so a project without the pinned devShell silently loses its gate.
+// Existing files belong to the project and are only inspected.
+func toolchainFiles(root, source string) (map[string][]byte, []string, error) {
+	files := map[string][]byte{}
+	var notices []string
+	full, info, err := inspectPath(root, "flake.nix")
+	if err != nil {
+		return nil, nil, fmt.Errorf("flake.nix: %w", err)
+	}
+	switch {
+	case info == nil && source != "":
+		files["flake.nix"] = []byte(projectFlake(source))
+	case info == nil:
+		notices = append(notices, "flake.nix не создан: укажи --wk-flake или WK_FLAKE, иначе хуки не найдут wk в PATH.")
+	default:
+		data, err := readLimited(full, 1<<20)
+		if err != nil {
+			return nil, nil, fmt.Errorf("flake.nix: %w", err)
+		}
+		if !strings.Contains(string(data), "wk.packages") {
+			notices = append(notices, "flake.nix сохранён: добавь wk.packages.${system}.wk в devShell, иначе хуки не найдут wk в PATH.")
+		}
+	}
+	if _, info, err := inspectPath(root, ".envrc"); err != nil {
+		return nil, nil, fmt.Errorf(".envrc: %w", err)
+	} else if info == nil {
+		files[".envrc"] = []byte("use flake\n")
+	}
+	return files, notices, nil
 }
 
 func baseFiles() (map[string][]byte, error) {

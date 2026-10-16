@@ -16,6 +16,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "wk hook guard-shell",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [

@@ -7,12 +7,25 @@
           {
             "type": "command",
             "command": "wk hook guard-paths",
-            "timeout": 5
+            "timeout": 5,
+            "onFailure": "block"
           },
           {
             "type": "command",
             "command": "wk hook guard-block",
-            "timeout": 5
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "wk hook guard-shell",
+            "timeout": 5,
+            "onFailure": "block"
           }
         ]
       }
@@ -37,7 +50,8 @@
             "type": "command",
             "command": "wk hook check",
             "timeout": 10,
-            "statusMessage": "проверка документации и политик"
+            "statusMessage": "проверка документации и политик",
+            "onFailure": "block"
           }
         ]
       }

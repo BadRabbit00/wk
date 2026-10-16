@@ -145,7 +145,7 @@ func TestDoctor(t *testing.T) {
 			s := server(t, tc.overrides)
 			a := testApp(t, s)
 			put(t, a.Root, "docs/INDEX.md", "# Docs\n")
-			put(t, a.Root, "AGENTS.md", "<!-- wikisvc:begin version=a3f91c2e -->\nPolicies\n<!-- wikisvc:end -->\n")
+			put(t, a.Root, "AGENTS.md", currentBlock+"\n")
 			if code, out, err := invoke(t, a, "doctor"); code != tc.code || !strings.Contains(out, tc.contains) {
 				t.Fatalf("%d %s %s", code, out, err)
 			}

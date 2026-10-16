@@ -138,6 +138,10 @@ func (a App) policies(ctx context.Context, c Client, m Manifest, sync bool) (res
 			} else if old != compiled.Version {
 				check.Status = "fail"
 				check.Message = "политики изменились, выполни `wk policy sync`"
+			} else if expected, _ := exportPolicy("", compiled); policyRE.FindString(strings.ReplaceAll(strings.ReplaceAll(current, "\r\n", "\n"), "\r", "\n"))+"\n" != expected {
+				// The version marker alone can be kept while the text inside is rewritten.
+				check.Status = "fail"
+				check.Message = "блок политик изменён вручную, выполни `wk policy sync`"
 			}
 			if check.Status == "fail" {
 				code = 1
