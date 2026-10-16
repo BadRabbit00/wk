@@ -12,15 +12,29 @@ Nix не нужен. Пакет ставит `wk` в `/usr/bin` и тянет `g
 предупреждает об этом строкой `binary`.
 
 ```sh
+R=https://github.com/BadRabbit00/wk/releases/download/v0.1.0
+
 # Fedora
-sudo dnf install https://github.com/BadRabbit00/wk/releases/download/v0.1.0/wk-0.1.0-1.x86_64.rpm
+curl -fLO "$R/wk-0.1.0-1.x86_64.rpm" -O "$R/checksums.txt"
+sha256sum --check --ignore-missing checksums.txt
+sudo dnf install ./wk-0.1.0-1.x86_64.rpm
+
 # Arch
-sudo pacman -U https://github.com/BadRabbit00/wk/releases/download/v0.1.0/wk-0.1.0-1-x86_64.pkg.tar.zst
+curl -fLO "$R/wk-0.1.0-1-x86_64.pkg.tar.zst" -O "$R/checksums.txt"
+sha256sum --check --ignore-missing checksums.txt
+sudo pacman -U ./wk-0.1.0-1-x86_64.pkg.tar.zst
+
 # Debian/Ubuntu
-curl -LO https://github.com/BadRabbit00/wk/releases/download/v0.1.0/wk_0.1.0_amd64.deb && sudo apt install ./wk_0.1.0_amd64.deb
+curl -fLO "$R/wk_0.1.0_amd64.deb" -O "$R/checksums.txt"
+sha256sum --check --ignore-missing checksums.txt
+sudo apt install ./wk_0.1.0_amd64.deb
 
 wk version
 ```
+
+Пакет ставится из скачанного файла, а не по URL: `pacman -U <URL>` требует
+GPG-подпись (`RemoteFileSigLevel = Required`), пакеты не подписаны GPG —
+целостность дают `checksums.txt` и аттестация.
 
 Подлинность файла из релиза: `gh attestation verify FILE --repo BadRabbit00/wk`
 (сборка в GitHub Actions подписана build provenance) и `sha256sum --check checksums.txt`.
