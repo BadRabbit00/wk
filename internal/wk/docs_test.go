@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -229,5 +230,21 @@ func TestDocsCommands(t *testing.T) {
 	}
 	if _, err := a.check(context.Background(), Client{Origin: s.URL}, manifest(s.URL), nil); err == nil {
 		t.Fatal("bad docs accepted")
+	}
+}
+
+// Regression: marker order reached the committed registry in filesystem order,
+// so ext4 (CI) and btrfs produced different registries from the same tree.
+func TestReadCodeOrderIsSorted(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"z/b.go", "z/a.go", "m.go", "a/x.go", "b.go"} {
+		put(t, root, name, "// doc: X\n")
+	}
+	var got []string
+	for _, f := range readCode(root, filepath.Join(root, "docs")) {
+		got = append(got, f.Path)
+	}
+	if want := []string{"b.go", "m.go", "a/x.go", "z/a.go", "z/b.go"}; !slices.Equal(got, want) {
+		t.Fatal(got)
 	}
 }

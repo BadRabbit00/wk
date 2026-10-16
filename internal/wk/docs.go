@@ -43,8 +43,9 @@ func readDocs(root string) ([]docscheck.File, error) {
 	return files, err
 }
 
-// os.walk visits files before subdirectories, in filesystem order. Retain that
-// order because the Python oracle exposes it in marker locations and warnings.
+// Like os.walk, files are visited before subdirectories. Unlike os.walk, names
+// are sorted: filesystem order differs between ext4 and btrfs, and it leaks into
+// marker order in the committed registry, which must not depend on the machine.
 func readCode(root, docs string) []docscheck.File {
 	var files []docscheck.File
 	var walk func(string)
@@ -53,12 +54,7 @@ func readCode(root, docs string) []docscheck.File {
 		if err != nil || resolved == docs {
 			return
 		}
-		f, err := os.Open(dir)
-		if err != nil {
-			return
-		}
-		entries, err := f.ReadDir(-1)
-		f.Close()
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return
 		}
