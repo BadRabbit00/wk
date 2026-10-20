@@ -13,3 +13,21 @@ jobs:
       - uses: cachix/install-nix-action@v31
       # gofmt, go vet, every test and the 100% per-function coverage gate.
       - run: nix flake check --print-build-logs
+  # The test suite leans on POSIX permissions and symlinks, so Windows gets a
+  # native build, vet and a run of the binary; the full gate stays in `check`.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build -trimpath -o wk.exe ./cmd/cli
+        env:
+          CGO_ENABLED: "0"
+      - run: ./wk.exe version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wk-windows-amd64
+          path: wk.exe

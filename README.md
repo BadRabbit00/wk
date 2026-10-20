@@ -38,7 +38,9 @@ GPG-подпись (`RemoteFileSigLevel = Required`), пакеты не подп
 
 Подлинность файла из релиза: `gh attestation verify FILE --repo BadRabbit00/wk`
 (сборка в GitHub Actions подписана build provenance) и `sha256sum --check checksums.txt`.
-Для arm64 — файлы `aarch64`/`arm64` в том же релизе, для macOS — `tar.gz`.
+Для arm64 — файлы `aarch64`/`arm64` в том же релизе, для macOS — `tar.gz`,
+для Windows — `zip` с `wk.exe` (положи его в каталог, куда пишет только
+администратор, например `C:\Program Files\wk`, и добавь его в `PATH`).
 Nix: `nix run github:BadRabbit00/wk -- …`, проекты тогда получают `flake.nix`
 с `wk`, закреплённым на ревизии релиза.
 
