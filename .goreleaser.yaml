@@ -17,7 +17,7 @@ builds:
     binary: wk
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin]
+    goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags:
@@ -29,6 +29,9 @@ builds:
 archives:
   - formats: [tar.gz]
     name_template: "wk_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     files: [README.md]
 
 checksum:
